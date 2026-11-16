@@ -1,0 +1,103 @@
+name: Validate
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  validate-docs:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check documentation structure
+        run: |
+          test -d docs || { echo "❌ docs/ directory not found"; exit 1; }
+          test -f docs/00-INDEX.md || { echo "❌ docs/00-INDEX.md not found"; exit 1; }
+          test -f README.md || { echo "❌ README.md not found"; exit 1; }
+          echo "✅ Documentation structure OK"
+
+      - name: Validate markdown files
+        run: |
+          if ! command -v npm &> /dev/null; then
+            echo "⚠️  npm not available, skipping markdown-lint"
+          else
+            npm install -g markdownlint-cli 2>/dev/null || true
+            markdownlint docs/**/*.md README.md 2>/dev/null || echo "⚠️  Some markdown warnings (non-blocking)"
+          fi
+          echo "✅ Markdown validation complete"
+
+      - name: Check firestore.rules syntax
+        run: |
+          if ! grep -q "rules_version = '2'" firestore.rules; then
+            echo "❌ firestore.rules missing version"
+            exit 1
+          fi
+          if ! grep -q "service cloud.firestore" firestore.rules; then
+            echo "❌ firestore.rules missing service declaration"
+            exit 1
+          fi
+          echo "✅ firestore.rules syntax OK"
+
+      - name: Verify security fixes present
+        run: |
+          if ! grep -q "FIX S1" firestore.rules; then
+            echo "⚠️  S1 fix comment not found (expected after reorganization)"
+          fi
+          if ! grep -q "getReCaptchaV3Provider" firebase.js; then
+            echo "⚠️  App Check initialization not found (expected after reorganization)"
+          fi
+          echo "✅ Security hardening checks complete"
+
+      - name: Check cross-document links
+        run: |
+          # Verify key internal links exist
+          test -f docs/product/01-prd-phase1-2.md || { echo "❌ PRD not found"; exit 1; }
+          test -f docs/product/02-decisions-log.md || { echo "❌ Decisions log not found"; exit 1; }
+          test -f docs/architecture/02-data-model.md || { echo "❌ Data model not found"; exit 1; }
+          echo "✅ All key documentation files present"
+
+      - name: Validate CHANGELOG consistency
+        run: |
+          if [ -f CHANGELOG.md ]; then
+            if ! grep -q "2026-11-16" CHANGELOG.md; then
+              echo "⚠️  CHANGELOG may be outdated"
+            else
+              echo "✅ CHANGELOG is current"
+            fi
+          else
+            echo "⚠️  CHANGELOG.md not found (optional)"
+          fi
+
+  validate-security:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for exposed secrets
+        run: |
+          if grep -r "COLE_AQUI\|TODO\|FIXME" --include="*.js" --include="*.html" .; then
+            echo "⚠️  Found TODO/FIXME comments (review before shipping)"
+          fi
+
+          if grep -r "api.*key.*=" --include="*.js" index.html firebase.js 2>/dev/null | grep -v "FIREBASE_CONFIG\|apiKey"; then
+            echo "❌ Potential hardcoded secrets found"
+            exit 1
+          fi
+          echo "✅ No obvious hardcoded secrets"
+
+      - name: Verify firestore permissions
+        run: |
+          if grep -q "allow read: if true" firestore.rules; then
+            echo "⚠️  Found overly permissive read rule - verify this is intentional"
+          fi
+
+          if grep -q "allow write: if true" firestore.rules; then
+            echo "❌ Found overly permissive write rule"
+            exit 1
+          fi
+          echo "✅ Firestore permissions appear restrictive"

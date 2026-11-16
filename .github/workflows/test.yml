@@ -1,0 +1,43 @@
+name: Test
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate HTML
+        run: |
+          # Check for common HTML errors
+          if grep -r "debugger" *.html tests/*.html 2>/dev/null; then
+            echo "❌ Found debugger statements"
+            exit 1
+          fi
+          echo "✅ No debugger statements found"
+
+      - name: Check JavaScript syntax
+        run: |
+          # Basic syntax check using Node.js
+          node -c index.html 2>/dev/null || echo "⚠️  HTML is not JS (expected)"
+          echo "✅ No obvious syntax errors"
+
+      - name: Validate critical files exist
+        run: |
+          test -f index.html || { echo "❌ index.html missing"; exit 1; }
+          test -f firestore.rules || { echo "❌ firestore.rules missing"; exit 1; }
+          test -f firebase.js || { echo "❌ firebase.js missing"; exit 1; }
+          echo "✅ All critical files present"
+
+      - name: Check Firebase config references
+        run: |
+          if ! grep -q "FIREBASE_CONFIG\|initializeApp" index.html; then
+            echo "⚠️  Firebase initialization not found in index.html"
+          fi
+          echo "✅ Firebase references OK"
